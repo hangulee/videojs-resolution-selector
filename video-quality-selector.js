@@ -175,9 +175,6 @@
 	 ***********************************************************************************/
 	_V_.plugin( 'resolutionSelector', function( options ) {
 		
-		// Only enable the plugin on HTML5 videos
-		if ( ! this.el().firstChild.canPlayType  ) { return; }	
-		
 		/*******************************************************************
 		 * Setup variables, parse settings
 		 *******************************************************************/
@@ -202,186 +199,207 @@
 			// Split default resolutions if set and valid, otherwise default to an empty array
 			default_resolutions = ( settings.default_res && typeof settings.default_res == 'string' ) ? settings.default_res.split( ',' ) : [];
 		
-		// Get all of the available resoloutions
-		while ( i > 0 ) {
+		if ( ! this.el().firstChild.canPlayType  ) {
 			
-			i--;
+			if ( sources.length < 1 ) return;
 			
-			// Skip sources that don't have data-res attributes
-			if ( ! sources[i]['data-res'] ) { continue; }
-			
-			current_res = sources[i]['data-res'];
-			
-			if ( typeof available_res[current_res] !== 'object' ) {
+			if ( vjs.Flash.formats[sources[0].type] == 'HLS' ) {
+				// for HLS in Flash failback
 				
-				available_res[current_res] = [];
-				available_res.length++;
 			}
-			
-			available_res[current_res].push( sources[i] );
-		}
 		
-		// Check for forced types
-		if ( settings.force_types ) {
+		} else {
 			
-			// Loop through all available resoultions
-			for ( current_res in available_res ) {
+			if ( sources.length < 1 ) return;
+			
+			if (sources[0].type == 'application/x-mpegurl') {
+				// for HLS in iOS or MacOSX or Android
 				
-				// Don't count the length property as a resolution
-				if ( 'length' == current_res ) { continue; }
 				
-				i = settings.force_types.length;
-				found_types = 0;
-				
-				// Loop through all required types
+			} else {
+		
+				// Get all of the available resoloutions
 				while ( i > 0 ) {
 					
 					i--;
 					
-					j = available_res[current_res].length;
+					// Skip sources that don't have data-res attributes
+					if ( ! sources[i]['data-res'] ) { continue; }
 					
-					// Loop through all available sources in current resolution
-					while ( j > 0 ) {
+					current_res = sources[i]['data-res'];
+					
+					if ( typeof available_res[current_res] !== 'object' ) {
 						
-						j--;
+						available_res[current_res] = [];
+						available_res.length++;
+					}
+					
+					available_res[current_res].push( sources[i] );
+				}
+				
+				// Check for forced types
+				if ( settings.force_types ) {
+					
+					// Loop through all available resoultions
+					for ( current_res in available_res ) {
 						
-						// Check if the current source matches the current type we're checking
-						if ( settings.force_types[i] === available_res[current_res][j].type ) {
+						// Don't count the length property as a resolution
+						if ( 'length' == current_res ) { continue; }
+						
+						i = settings.force_types.length;
+						found_types = 0;
+						
+						// Loop through all required types
+						while ( i > 0 ) {
 							
-							found_types++;
-							break;
+							i--;
+							
+							j = available_res[current_res].length;
+							
+							// Loop through all available sources in current resolution
+							while ( j > 0 ) {
+								
+								j--;
+								
+								// Check if the current source matches the current type we're checking
+								if ( settings.force_types[i] === available_res[current_res][j].type ) {
+									
+									found_types++;
+									break;
+								}
+							}
+						}
+						
+						// If we didn't find sources for all of the required types in the current res, remove it
+						if ( found_types < settings.force_types.length ) {
+							
+							delete available_res[current_res];
+							available_res.length--;
 						}
 					}
 				}
 				
-				// If we didn't find sources for all of the required types in the current res, remove it
-				if ( found_types < settings.force_types.length ) {
+				// Make sure we have at least 2 available resolutions before we add the button
+				if ( available_res.length < 2 ) { return; }
+				
+				// Loop through the choosen default resolutions if there were any
+				for ( i = 0; i < default_resolutions.length; i++ ) {
 					
-					delete available_res[current_res];
-					available_res.length--;
-				}
-			}
-		}
-		
-		// Make sure we have at least 2 available resolutions before we add the button
-		if ( available_res.length < 2 ) { return; }
-		
-		// Loop through the choosen default resolutions if there were any
-		for ( i = 0; i < default_resolutions.length; i++ ) {
-			
-			// Set the video to start out with the first available default res
-			if ( available_res[default_resolutions[i]] ) {
-				
-				player.src( available_res[default_resolutions[i]] );
-				player.currentRes = default_resolutions[i];
-				break;
-			}
-		}
-		
-		/*******************************************************************
-		 * Add methods to player object
-		 *******************************************************************/
-		
-		// Make sure we have player.localize() if it's not defined by Video.js
-		if ( typeof player.localize !== 'function' ) {
-			
-			player.localize = function( string ) {
-				
-				return string;
-			};
-		}
-		
-		// Helper function to get the current resolution
-		player.getCurrentRes = function() {
-			
-			if ( typeof player.currentRes !== 'undefined' ) {
-				
-				return player.currentRes;
-				
-			} else {
-				
-				try {
-					
-					return res = player.options().sources[0]['data-res'];
-					
-				} catch(e) {
-					
-					return '';
-				}
-			}
-		};
-		
-		// Define the change res method
-		player.changeRes = function( target_resolution ) {
-			
-			var video_el = player.el().firstChild,
-				is_paused = player.paused(),
-				current_time = player.currentTime(),
-				button_nodes,
-				button_node_count;
-			
-			// Do nothing if we aren't changing resolutions or if the resolution isn't defined
-			if ( player.getCurrentRes() == target_resolution
-				|| ! player.availableRes
-				|| ! player.availableRes[target_resolution] ) { return; }
-			
-			// Make sure the loadedmetadata event will fire
-			if ( 'none' == video_el.preload ) { video_el.preload = 'metadata'; }
-			
-			// Change the source and make sure we don't start the video over		
-			player.src( player.availableRes[target_resolution] ).one( 'loadedmetadata', function() {
-				
-				player.currentTime( current_time );
-				
-				// If the video was paused, don't show the poster image again
-				player.addClass( 'vjs-has-started' );
-				
-				if ( ! is_paused ) { player.play(); }
-			});
-			
-			// Save the newly selected resolution in our player options property
-			player.currentRes = target_resolution;
-			
-			// Make sure the button has been added to the control bar
-			if ( player.controlBar.resolutionSelector ) {
-				
-				button_nodes = player.controlBar.resolutionSelector.el().firstChild.children;
-				button_node_count = button_nodes.length;
-				
-				// Update the button text
-				while ( button_node_count > 0 ) {
-					
-					button_node_count--;
-					
-					if ( 'vjs-control-text' == button_nodes[button_node_count].className ) {
+					// Set the video to start out with the first available default res
+					if ( available_res[default_resolutions[i]] ) {
 						
-						button_nodes[button_node_count].innerHTML = methods.res_label( target_resolution );
+						player.src( available_res[default_resolutions[i]] );
+						player.currentRes = default_resolutions[i];
 						break;
 					}
 				}
+				
+				/*******************************************************************
+				 * Add methods to player object
+				 *******************************************************************/
+				
+				// Make sure we have player.localize() if it's not defined by Video.js
+				if ( typeof player.localize !== 'function' ) {
+					
+					player.localize = function( string ) {
+						
+						return string;
+					};
+				}
+				
+				// Helper function to get the current resolution
+				player.getCurrentRes = function() {
+					
+					if ( typeof player.currentRes !== 'undefined' ) {
+						
+						return player.currentRes;
+						
+					} else {
+						
+						try {
+							
+							return res = player.options().sources[0]['data-res'];
+							
+						} catch(e) {
+							
+							return '';
+						}
+					}
+				};
+				
+				// Define the change res method
+				player.changeRes = function( target_resolution ) {
+					
+					var video_el = player.el().firstChild,
+						is_paused = player.paused(),
+						current_time = player.currentTime(),
+						button_nodes,
+						button_node_count;
+					
+					// Do nothing if we aren't changing resolutions or if the resolution isn't defined
+					if ( player.getCurrentRes() == target_resolution
+						|| ! player.availableRes
+						|| ! player.availableRes[target_resolution] ) { return; }
+					
+					// Make sure the loadedmetadata event will fire
+					if ( 'none' == video_el.preload ) { video_el.preload = 'metadata'; }
+					
+					// Change the source and make sure we don't start the video over		
+					player.src( player.availableRes[target_resolution] ).one( 'loadedmetadata', function() {
+						
+						player.currentTime( current_time );
+						
+						// If the video was paused, don't show the poster image again
+						player.addClass( 'vjs-has-started' );
+						
+						if ( ! is_paused ) { player.play(); }
+					});
+					
+					// Save the newly selected resolution in our player options property
+					player.currentRes = target_resolution;
+					
+					// Make sure the button has been added to the control bar
+					if ( player.controlBar.resolutionSelector ) {
+						
+						button_nodes = player.controlBar.resolutionSelector.el().firstChild.children;
+						button_node_count = button_nodes.length;
+						
+						// Update the button text
+						while ( button_node_count > 0 ) {
+							
+							button_node_count--;
+							
+							if ( 'vjs-control-text' == button_nodes[button_node_count].className ) {
+								
+								button_nodes[button_node_count].innerHTML = methods.res_label( target_resolution );
+								break;
+							}
+						}
+					}
+					
+					// Update the classes to reflect the currently selected resolution
+					player.trigger( 'changeRes' );
+				}
+				
+				/*******************************************************************
+				 * Add the resolution selector button
+				 *******************************************************************/
+				
+				// Get the starting resolution
+				current_res = player.getCurrentRes();
+				
+				if ( current_res ) { current_res = methods.res_label( current_res ); }
+				
+				// Add the resolution selector button
+				resolutionSelector = new _V_.ResolutionSelector( player, {
+					buttonText		: player.localize( current_res || 'Quality' ),
+					available_res	: available_res
+				});
+				
+				// Add the button to the control bar object and the DOM
+				player.controlBar.resolutionSelector = player.controlBar.addChild( resolutionSelector );
 			}
-			
-			// Update the classes to reflect the currently selected resolution
-			player.trigger( 'changeRes' );
 		};
-		
-		/*******************************************************************
-		 * Add the resolution selector button
-		 *******************************************************************/
-		
-		// Get the starting resolution
-		current_res = player.getCurrentRes();
-		
-		if ( current_res ) { current_res = methods.res_label( current_res ); }
-		
-		// Add the resolution selector button
-		resolutionSelector = new _V_.ResolutionSelector( player, {
-			buttonText		: player.localize( current_res || 'Quality' ),
-			available_res	: available_res
-		});
-		
-		// Add the button to the control bar object and the DOM
-		player.controlBar.resolutionSelector = player.controlBar.addChild( resolutionSelector );
 	});
 
 })( videojs );
