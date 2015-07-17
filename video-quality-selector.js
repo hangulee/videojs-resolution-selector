@@ -157,13 +157,19 @@
 		// Sort the available resolutions in descending order
 		items.sort(function( a, b ) {
 			
+			var value = function(val) {
+				if(val=='Auto') return 2000;
+				else if(val=='Audio') return 0;
+				else return parseInt(val);
+				
+			}
+			
 			if ( typeof a.resolution == 'undefined' ) {
 				
 				return -1;
 				
 			} else {
-				
-				return parseInt( b.resolution ) - parseInt( a.resolution );
+				return value( b.resolution ) - value( a.resolution );
 			}
 		});
 		
@@ -206,6 +212,80 @@
 			if ( vjs.Flash.formats[sources[0].type] == 'HLS' ) {
 				// for HLS in Flash failback
 				
+				player.currentRes = 'Auto';
+				
+				player.getCurrentRes = function() {
+					
+					return player.currentRes;
+				}
+				
+				player.changeRes = function( target_resolution ) {
+					
+					if (this.getCurrentRes() == target_resolution) return;
+					
+					var target = player.availableRes[target_resolution];
+					
+					if (target) {
+						player.tech.el_.vjs_setProperty('level', target.index);
+					}
+					
+					// Save the newly selected resolution in our player options property
+					player.currentRes = target_resolution;
+					
+					// Make sure the button has been added to the control bar
+					if ( player.controlBar.resolutionSelector ) {
+						
+						button_nodes = player.controlBar.resolutionSelector.el().firstChild.children;
+						button_node_count = button_nodes.length;
+						
+						// Update the button text
+						while ( button_node_count > 0 ) {
+							
+							button_node_count--;
+							
+							if ( 'vjs-control-text' == button_nodes[button_node_count].className ) {
+								
+								button_nodes[button_node_count].innerHTML = methods.res_label( target_resolution );
+								break;
+							}
+						}
+					}
+					
+					// Update the classes to reflect the currently selected resolution
+					player.trigger( 'changeRes' );
+				}
+				
+				player.one( 'loadedmetadata', function() {
+					
+					var metadata = player.tech.el_.vjs_getProperty('metadata');
+					
+					if(metadata.levels.length > 0) {
+						available_res['Auto'] = { index: -1, bitrate:'0' };
+						available_res.length++;
+					}
+					
+					for(var i=0; i<metadata.levels.length; i++) {
+						
+						current_res = metadata.levels[i].height;
+						
+						if (current_res==0) current_res = 'Audio';
+						
+						if ( typeof available_res[current_res] !== 'object' ) {
+							
+							available_res[current_res] = {index: i, bitrate: metadata.levels[i].bitrate};
+							available_res.length++;
+						}
+					}
+					
+					// Add the resolution selector button
+					resolutionSelector = new _V_.ResolutionSelector( player, {
+						buttonText		: player.localize( 'Auto' ),
+						available_res	: available_res
+					});
+					
+					// Add the button to the control bar object and the DOM
+					player.controlBar.resolutionSelector = player.controlBar.addChild( resolutionSelector );
+				});
 			}
 		
 		} else {
@@ -215,6 +295,145 @@
 			if (sources[0].type == 'application/x-mpegurl') {
 				// for HLS in iOS or MacOSX or Android
 				
+				player.getCurrentRes = function() {
+					
+					var current_src = player.src();
+					
+					for(var res in player.availableRes) {
+						if(current_src == player.availableRes[res].src) {
+							player.currentRes = res;
+							return res;
+						}
+					}
+					return '';
+				}
+				
+				player.changeRes = function( target_resolution ) {
+					
+					var video_el = player.el().firstChild,
+						is_paused = player.paused(),
+						current_time = player.currentTime(),
+						button_nodes,
+						button_node_count;
+					
+					// Do nothing if we aren't changing resolutions or if the resolution isn't defined
+					if ( player.getCurrentRes() == target_resolution
+						|| ! player.availableRes
+						|| ! player.availableRes[target_resolution] ) { return; }
+					
+					// Make sure the loadedmetadata event will fire
+					if ( 'none' == video_el.preload ) { video_el.preload = 'metadata'; }
+					
+					if(vjs.IS_IOS) {
+						player.one( 'loadeddata', function() {
+							//log(' -- loadeddata .. ' + current_time + ',' + player.seekable().length);
+							player.currentTime( current_time );
+						});
+					} else {
+						// for Android OS
+						player.one( 'progress', function() {
+							//log(' -- progress .. ' + current_time + ',' + player.seekable().length);
+							player.currentTime( current_time );
+						});
+					}
+					
+					player.one( 'loadedmetadata', function() {
+						//log(' -- loadedmetadata');
+						player.addClass( 'vjs-has-started' );
+						if ( ! is_paused ) { player.play(); }
+					});
+					
+					// for Bug in iOS
+					player.one( 'stalled', function() {
+						//log(' -- stalled');
+						player.removeClass('vjs-seeking');
+					});
+					
+					player.src(player.availableRes[target_resolution]);
+					
+					// Save the newly selected resolution in our player options property
+					player.currentRes = target_resolution;
+					
+					// Make sure the button has been added to the control bar
+					if ( player.controlBar.resolutionSelector ) {
+						
+						button_nodes = player.controlBar.resolutionSelector.el().firstChild.children;
+						button_node_count = button_nodes.length;
+						
+						// Update the button text
+						while ( button_node_count > 0 ) {
+							
+							button_node_count--;
+							
+							if ( 'vjs-control-text' == button_nodes[button_node_count].className ) {
+								
+								button_nodes[button_node_count].innerHTML = methods.res_label( target_resolution );
+								break;
+							}
+						}
+					}
+					
+					// Update the classes to reflect the currently selected resolution
+					player.trigger( 'changeRes' );
+				}
+				
+				this.on( 'loadedmetadata', function() {
+				});
+				
+				videojs.xhr({
+					uri: '/player/m3u8.php?' + sources[0]['src'],
+					method: 'GET',
+					responseType: 'text'
+				}, function(error, response, responseText) {
+					
+					if (error) {
+						console.log(error);
+					} else {
+						
+						var lines = responseText.split('\n');
+						
+						for(var i=0; i<lines.length; i++) {
+							var line = lines[i];
+							if (line.indexOf('#EXT-X-STREAM-INF:') === 0) {
+								var params = line.substring('#EXT-X-STREAM-INF:'.length).split(',');
+								
+								current_res = 'Audio';
+								
+								for(var j=0; j<params.length; j++) {
+									var param = vjs.trim(params[j]);
+									if (param.indexOf('RESOLUTION=') === 0) {
+										var value = vjs.trim(param.substring('RESOLUTION='.length));
+										current_res = value.split('x')[1];
+									}
+								}
+										
+								if ( typeof available_res[current_res] !== 'object' ) {
+									
+									available_res[current_res] = {
+										src: lines[++i],
+										type: 'application/x-mpegurl',
+										'data-res': (current_res == 'Audio' ? 0 : current_res)
+									};
+									available_res.length++;
+								}
+							}
+						}
+						
+						if(available_res.length > 0) {
+							available_res['Auto'] = { src: sources[0]['src'], type: 'application/x-mpegurl', 'data-res': '-1' };
+							available_res.length++;
+						}
+						
+						// Add the resolution selector button
+						resolutionSelector = new _V_.ResolutionSelector( player, {
+							buttonText		: player.localize( 'Auto' ),
+							available_res	: available_res
+						});
+						
+						// Add the button to the control bar object and the DOM
+						player.controlBar.resolutionSelector = player.controlBar.addChild( resolutionSelector );
+					}
+				});
 				
 			} else {
 		
